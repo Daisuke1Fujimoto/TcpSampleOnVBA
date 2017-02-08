@@ -8,76 +8,105 @@
 '　32bit(x86)版のWSH(C:\Windows\SysWow64\cscript.exe)を使用してください。
 '===========================================================
 
+'===========================================================
+'メイン処理
+'===========================================================
 '----------
-' 初期処理
+' 初期処理／設定
 '----------
+Dim ipAddess, portNo
 Dim i
+Dim commandStr(10), k
+Dim commandFileName
 
+ipAddess        = "127.0.0.1"
+portNo          = 4000
+commandFileName = "testUtf8.txt"
+
+'----------
+' 処理
+'----------
 Set Winsock1 = CreateObject("NonComSck.Winsock")
 i = 0
 
-do while true
-	call startConnection
-	call main
-loop
+'コマンド用文字列を配列にセット
+Call readCommandFile(commandFileName)
+
+'コマンド用文字列を送信するループ
+Do While True
+	Call startConnection
+	Call transData
+Loop
+
+WSCript.Quit
 
 '===========================================================
 'メイン処理
 '===========================================================
-SUB main()
-	WScript.Echo "---main-----"
+Sub transData()
+	
+	Dim wText
+	Dim wSendStr
+	
+	WScript.Echo "---transData-----"
 	'----------
-	' データ送信(文字列をByte配列に変換して送信)／ENDの場合は強制終了
+	' データ送信(文字列をByte配列に変換して送信)／Endの場合は強制終了
 	'----------
-	''''''wText = InputBox("送信テキストを入力","入力","red")
+	
+	'コマンド用文字列を１行分だけ抽出
 	wText = speechText(i)
 	WScript.Echo i & ":" & wText
 	
-	''''''''''''''''''wText = encodeUTF8(wText)
 	i = i + 1
+
+	'コマンド用文字列（改行コード<LF>込）をUTF-8に変換する
+	wSendStr = encodeStr(wText & vbLf, "UTF-8")
 	
-	'Winsock1.SendData Winsock1.StrToByteArray(wText & vbLf)
-	Winsock1.SendData wText & vbLf
+	'サーバ側へコマンド用文字列を送信
+	Winsock1.SEndData wSendStr
 
 	'----------
-	' データ受信
+	' データ受信（サーバからの受信応答を確認）
 	'----------
 	Winsock1.Start_EventForScript()
 	Do
-	    WScript.Sleep(500)
-	    Evt = Winsock1.GetEventParameters()
-	    If Ubound(Evt) >= 0 Then
-	        ' Evt(0) : イベント名
-	        If Evt(0) = "DataArrival" Then
-	            ' Evt(9) : 受信データのByte配列
-	            ' Byte配列を文字列に変換
-	            'MsgBox Winsock1.ByteArrayToStr(Evt(9))
-	            WScript.Echo Winsock1.ByteArrayToStr(Evt(9))
-	            Exit Do
-	        End If
-	    End If
+		WScript.Sleep(500)
+		Evt = Winsock1.GetEventParameters()
+		If Ubound(Evt) >= 0 Then
+		
+			' Evt(0) : イベント名
+			If Evt(0) = "DataArrival" Then
+				' Evt(9) : 受信データのByte配列
+				' Byte配列を文字列に変換
+				WScript.Echo Winsock1.ByteArrayToStr(Evt(9))
+				Exit Do
+				
+			End If
+			
+		End If
 	Loop
 	Winsock1.End_EventForScript()
 	
-	call disConnection()
-
-
-	IF wText = "end" THEN
-		call disConnection()
-		WSCript.Quit
-	END IF
+	'１伝文の送受信を確認したら切断（TCP/IP通信の制約）
+	Call disConnection()
 	
-END SUB
+	'終了コマンドが設定されていたら、プログラム終了
+	IF wText = "End" THEN
+		Call disConnection()
+		WSCript.Quit
+	End IF
+	
+End Sub
 
 '===========================================================
 ' TCP通信開始
 '===========================================================
-SUB startConnection()
+Sub startConnection()
 	WScript.Echo "---startConnection-----"
 	'----------
 	' TCP/IP接続
 	'----------
-	Winsock1.Connect "172.16.168.46", 5001
+	Winsock1.Connect ipAddess, portNo
 
 	'----------
 	' TCP/IP接続待ち
@@ -85,74 +114,101 @@ SUB startConnection()
 	Do While Winsock1.State = 6
 	    WScript.Sleep(500)
 	Loop
-End SUB
+End Sub
 
 '===========================================================
 ' TCP通信切断
 '===========================================================
-SUB disConnection()
-	WScript.Echo "---disConnection-----"
-	'----------
-	' TCP/IP切断
-	'----------
+Sub disConnection()
+	WScript.Echo "---disconnection-----"
+	
 	Winsock1.Close2
-
-	WScript.Echo "終了"
-end SUB
+	
+End Sub
 
 '===========================================================
-' 読み取りテキストの抽出
+' コマンド用文字列の抽出（１件分）
 '===========================================================
-FUNCTION speechText(byval pSpeechNo) 
+Function speechText(Byval pSpeechNo) 
 	Dim wRetText
 	
-	select case pSpeechNo
-	case 0
-		'wRetText = "ko re ka ra ka i sha se tu me i ka i wo ha ji me ma su"
-		wRetText = "これから会社説明会をはじめます"
-	case 1
-		'wRetText = "so no 1"
-		wRetText = "そのいち"
-	case 2
-		wRetText = "are ya kore ya"
-	case 3
-		wRetText = "so no 2"
-	case 4
-		wRetText = "dou tara kou tara"
-	case else
-		wRetText = "owari"
-	end select
-	
+	wRetText = commandStr(pSpeechNo)
 	speechText = wRetText
 	
-END FUNCTION
+End Function
 
 '===========================================================
-' 文字列をUTF-8でエンコードする
+' コマンド用ファイル（UTF-8のテキストファイル）を読込む
 '===========================================================
-FUNCTION encodeUTF8(byval mytext) 
-    Dim mystream
-    Dim mybinary, mynumber
-    
-    Set mystream = CreateObject("ADODB.Stream")
-    
-    With mystream
-        .Open
-        .Type = 2				'adTypeText
-        .Charset = "UTF-8"
-        .LineSeparator = 10		'改行コード：LF
-        .WriteText mytext
-        .Position = 0
-        .Type = 1				'adTypeBinary
-        .Position = 3
-        mybinary = .Read
-        .Close
-    End With
-    
-    WScript.Echo mybinary
-    
-    
-    For Each mynumber In mybinary
-        encodeUTF8 = encodeUTF8 & "%" & Hex(mynumber)
-    Next
-END FUNCTION
+Sub readCommandFile(Byval pFileName)
+	Dim objStream
+
+	'----------
+	' ファイルを読込む
+	'----------
+	Set objStream = CreateObject("ADODB.Stream")
+	
+	objStream.Type = 2							' 1：バイナリ, 2：テキスト
+	objStream.Charset = "UTF-8"					' 文字コード指定
+	objStream.Open
+	
+	objStream.LoadFromFile pFileName
+	
+	'----------
+	' 読込みファイルから1行ずつコマンド用文字列（配列）に書込み
+	'----------
+	k = 0
+	Do Until objStream.EOS
+		commandStr(k) = objStream.ReadText(-2)	' -1：全行読込み, -2：一行読込み
+		'WScript.Echo commandStr(k)
+		
+		k = k + 1
+	Loop
+	
+	'----------
+	'終了処理
+	'----------
+	objStream.Close
+	Set objStream = Nothing
+	
+End Sub
+
+'===========================================================
+' 文字コード変換
+'===========================================================
+Function encodeStr(Byval pStrUni, Byval pCharSet) 
+
+	Set objStream = CreateObject("ADODB.Stream")
+	
+	'----------
+	'指定された文字列をStreamに書込み
+	'----------
+	objStream.Open
+	objStream.Type = 2					' 1：バイナリ, 2：テキスト
+	objStream.Charset = pCharSet
+	objStream.WriteText pStrUni 
+	objStream.Position = 0
+
+	'----------
+	'文字コード変換してStremから読み出す
+	'----------
+	'BOMがある文字コードの場合は、最初のBOM分をスキップ
+	objStream.Type = 1					' 1：バイナリ, 2：テキスト
+	Select Case UCase(pCharSet)
+		Case "UNICODE", "UTF-16"
+			objStream.Position = 2
+			
+		Case "UTF-8"
+			objStream.Position = 3
+			
+	End Select
+	
+	encodeStr = objStream.Read()
+	
+	'----------
+	'終了処理
+	'----------
+	objStream.Close
+	Set objStream = Nothing
+	
+End Function
